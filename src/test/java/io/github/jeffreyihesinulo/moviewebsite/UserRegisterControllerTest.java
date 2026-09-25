@@ -11,6 +11,7 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.transaction.annotation.Transactional;
 import static org.assertj.core.api.Assertions.assertThat;
 
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -80,10 +81,67 @@ class UserRegisterControllerTest {
 
         UserEntity saved = userRepository.findByEmail("hashcheck@test.com").orElseThrow();
 
-        // Пароль НЕ должен храниться как есть
         assertThat(saved.getPasswordHash()).isNotEqualTo(rawPassword);
 
-        // BCrypt-хеш имеет узнаваемый вид: начинается с $2a$, $2b$ или $2y$
         assertThat(saved.getPasswordHash()).startsWith("$2");
+    }
+
+    @Test
+    void signIn_returnsToken() throws Exception {
+        mvc.perform(post("/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(registerJson("loginuser", "loginuser@test.com")))
+                .andExpect(status().isCreated());
+
+        mvc.perform(post("/signIn")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                {"userEmail":"loginuser@test.com","password":"secret123"}
+                """))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.token").exists());
+    }
+
+    @Test
+    void signIn_wrongPassword_returnsUnauthorized() throws Exception {
+        mvc.perform(post("/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(registerJson("loginuser2", "loginuser2@test.com")))
+                .andExpect(status().isCreated());
+
+        mvc.perform(post("/signIn")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                {"userEmail":"loginuser2@test.com","password":"wrongpass"}
+                """))
+                .andExpect(status().isUnauthorized());
+    }
+    @Test
+    void getMovies_withoutToken_returnsForbidden() throws Exception {
+        mvc.perform(get("/movies"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void getMovies_withValidToken_returnsOk() throws Exception {
+        // Регистрируем и логинимся, чтобы получить настоящий токен
+        mvc.perform(post("/register")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(registerJson("securitycheck", "securitycheck@test.com")))
+                .andExpect(status().isCreated());
+
+        String signInResponse = mvc.perform(post("/signIn")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                {"userEmail":"securitycheck@test.com","password":"secret123"}
+                """))
+                .andExpect(status().isOk())
+                .andReturn().getResponse().getContentAsString();
+
+        String token = com.jayway.jsonpath.JsonPath.read(signInResponse, "$.token");
+
+        mvc.perform(get("/movies")
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk());
     }
 }
